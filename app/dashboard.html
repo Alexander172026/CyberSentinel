@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CyberSentinel</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 900px; margin: 30px auto; padding: 0 15px; color: #222; }
+  h1 { margin-bottom: 5px; }
+  h3 { margin: 25px 0 8px; }
+  .resumen { color: #555; margin-bottom: 15px; }
+  button { padding: 6px 12px; margin: 0 5px 5px 0; cursor: pointer; }
+  input, select { padding: 5px; margin-right: 5px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ddd; font-size: 14px; }
+  .alta { color: #c00; font-weight: bold; }
+  .media { color: #d80; font-weight: bold; }
+  .baja { color: #080; font-weight: bold; }
+  .tag { display: inline-block; background: #eee; padding: 3px 8px; margin: 0 5px 5px 0; border-radius: 4px; font-size: 14px; }
+  .tag a { color: #c00; cursor: pointer; margin-left: 6px; text-decoration: none; }
+</style>
+</head>
+<body>
+
+<h1>CyberSentinel</h1>
+<div class="resumen" id="resumen">cargando...</div>
+
+<h3>Simular ataques</h3>
+<button onclick="simular('normal')">Tráfico normal</button>
+<button onclick="simular('fuerza_bruta')">Fuerza bruta</button>
+<button onclick="simular('spraying')">Contraseña spraying</button>
+<button onclick="simular('blacklist')">IP en lista negra</button>
+<button onclick="limpiar()">Limpiar todo</button>
+
+<h3>Enviar un log a mano</h3>
+<input id="ip" placeholder="IP (ej: 10.0.0.9)">
+<select id="tipo">
+  <option value="login_failed">login_failed</option>
+  <option value="login_ok">login_ok</option>
+</select>
+<input id="user" placeholder="usuario">
+<button onclick="enviarLog()">Enviar</button>
+
+<h3>Lista negra</h3>
+<div id="lista"></div>
+<input id="nueva-ip" placeholder="IP a bloquear">
+<button onclick="agregarIp()">Agregar</button>
+
+<h3>Alertas</h3>
+<table>
+  <thead><tr><th>Hora</th><th>Regla</th><th>peligro</th><th>IP</th><th>Descripción</th></tr></thead>
+  <tbody id="tabla"></tbody>
+</table>
+
+<h3>Últimos logs</h3>
+<table>
+  <thead><tr><th>Hora</th><th>IP</th><th>Evento</th><th>Usuario</th></tr></thead>
+  <tbody id="tabla-logs"></tbody>
+</table>
+
+<script>
+function esc(t) {
+  const d = document.createElement("div");
+  d.textContent = t ?? "";
+  return d.innerHTML;
+}
+
+async function api(url, metodo = "GET", body = null) {
+  const opciones = { method: metodo, headers: { "Content-Type": "application/json" } };
+  if (body) opciones.body = JSON.stringify(body);
+  const r = await fetch(url, opciones);
+  return r.json();
+}
+
+async function cargar() {
+  const stats = await api("/stats");
+  const alertas = await api("/alerts");
+  const lista = await api("/blacklist");
+
+  const sev = stats.alertas_por_peligro;
+  document.getElementById("resumen").textContent =
+    `${stats.total_logs} logs | ${stats.total_alertas} alertas ` +
+    `(${sev.alta || 0} altas, ${sev.media || 0} medias, ${sev.baja || 0} bajas)`;
+
+  document.getElementById("tabla").innerHTML = alertas.map(a => `
+    <tr>
+      <td>${new Date(a.timestamp + "Z").toLocaleString("es-CL")}</td>
+      <td>${esc(a.rule)}</td>
+      <td class="${esc(a.severity)}">${esc(a.severity)}</td>
+      <td>${esc(a.source_ip)}</td>
+      <td>${esc(a.description)}</td>
+    </tr>`).join("") || "<tr><td colspan='5'>Sin alertas</td></tr>";
+
+  document.getElementById("lista").innerHTML = lista.map(ip =>
+    `<span class="tag">${esc(ip)}<a onclick="quitarIp('${esc(ip)}')">x</a></span>`
+  ).join("") || "<span>Lista vacía</span>";
+
+  const logs = await api("/logs?limit=15");
+document.getElementById("tabla-logs").innerHTML = logs.map(l => `
+  <tr>
+    <td>${new Date(l.timestamp + "Z").toLocaleString("es-CL")}</td>
+    <td>${esc(l.source_ip)}</td>
+    <td>${esc(l.event_type)}</td>
+    <td>${esc(l.username)}</td>
+  </tr>`).join("") || "<tr><td colspan='4'>Sin logs</td></tr>";
+}
+
+async function simular(tipo) { await api("/simular/" + tipo, "POST"); cargar(); }
+
+async function limpiar() {
+  if (confirm("¿Borrar todos los logs y alertas?")) { await api("/reset", "DELETE"); cargar(); }
+}
+
+async function enviarLog() {
+  const ip = document.getElementById("ip").value.trim();
+  if (!ip) return alert("Falta la IP");
+  await api("/logs", "POST", {
+    source_ip: ip,
+    event_type: document.getElementById("tipo").value,
+    username: document.getElementById("user").value || null,
+    message: "enviado desde el dashboard",
+  });
+  cargar();
+}
+
+async function agregarIp() {
+  const ip = document.getElementById("nueva-ip").value.trim();
+  if (!ip) return;
+  await api("/blacklist", "POST", { ip });
+  document.getElementById("nueva-ip").value = "";
+  cargar();
+}
+
+async function quitarIp(ip) { await api("/blacklist/" + ip, "DELETE"); cargar(); }
+
+cargar();
+setInterval(cargar, 5000);
+</script>
+</body>
+</html>
